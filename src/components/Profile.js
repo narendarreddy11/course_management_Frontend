@@ -2,35 +2,54 @@ import React, { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "react-toastify";
 import { Button, Spinner } from "react-bootstrap";
-import api from "../api"; // ✅ your Axios instance with interceptors
+import api from "../api"; // ✅ Axios instance with interceptors
 
 const ProfilePage = () => {
   const { register, handleSubmit, reset } = useForm();
   const [loading, setLoading] = useState(false);
   const [selectedImage, setSelectedImage] = useState(null);
   const [previewImage, setPreviewImage] = useState(null);
+  const [profileExists, setProfileExists] = useState(false);
   const [profileData, setProfileData] = useState(null);
 
   const userId = sessionStorage.getItem("userId");
 
-  // ✅ Load existing profile on mount
-  useEffect(() => {
-    const fetchProfile = async () => {
-      try {
-        const response = await api.get(`/api/profile/${userId}`);
-        setProfileData(response.data);
-        reset(response.data);
-        if (response.data.profileImagePath) {
-          setPreviewImage(`http://localhost:8080${response.data.profileImagePath}`);
-        }
-      } catch (err) {
-        console.log("No existing profile yet");
-      }
-    };
-    fetchProfile();
-  }, [userId, reset]);
+  // ✅ Load existing profile
+ useEffect(() => {
+  const fetchProfile = async () => {
+    try {
+      const res = await api.get(`/api/profile/${userId}`);
 
-  // ✅ Handle image selection + preview
+      // ✅ Load profile only if data exists
+      if (res.data && Object.keys(res.data).length > 0) {
+        setProfileExists(true);
+        setProfileData(res.data);
+        reset(res.data);
+
+        if (res.data.profileImagePath) {
+          setPreviewImage(`http://localhost:8080${res.data.profileImagePath}`);
+        }
+      } else {
+        // No data in response — just show empty form
+        setProfileExists(false);
+      }
+    } catch (err) {
+      // ✅ 404 means no profile yet — no console, no toast, just empty form
+      if (err.response && err.response.status === 404) {
+        setProfileExists(false);
+      } else {
+        // Show toast only for real unexpected errors
+        console.error("⚠️ Unexpected error fetching profile:", err);
+        toast.error("⚠️ Could not load your profile");
+      }
+    }
+  };
+
+  fetchProfile();
+}, [userId, reset]);
+
+
+  // ✅ Handle image selection and preview
   const handleImageChange = (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -39,14 +58,13 @@ const ProfilePage = () => {
     }
   };
 
-  // ✅ Submit profile
+  // ✅ Handle create or update submit
   const onSubmit = async (data) => {
     try {
       setLoading(true);
 
       const formData = new FormData();
 
-      // 🔹 JSON part (must match @RequestPart("profile"))
       const profileBlob = new Blob(
         [
           JSON.stringify({
@@ -62,25 +80,27 @@ const ProfilePage = () => {
 
       formData.append("profile", profileBlob);
 
-      // 🔹 Image part
       if (selectedImage) {
         formData.append("image", selectedImage);
       }
 
-      const response = await api.post(`/api/profile/${userId}`, formData, {
-        headers: {
-          "Content-Type": "multipart/form-data",
-        },
+      const url = `/api/profile/${userId}`;
+      const method = profileExists ? api.put : api.post;
+
+      const res = await method(url, formData, {
+        headers: { "Content-Type": "multipart/form-data" },
       });
 
-      toast.success("✅ Profile updated successfully!");
-      setProfileData(response.data);
-      if (response.data.profileImagePath) {
-        setPreviewImage(`http://localhost:8080${response.data.profileImagePath}`);
+      toast.success(profileExists ? "✅ Profile updated!" : "✅ Profile created!");
+      setProfileExists(true);
+      setProfileData(res.data);
+
+      if (res.data.profileImagePath) {
+        setPreviewImage(`http://localhost:8080${res.data.profileImagePath}`);
       }
     } catch (error) {
-      console.error("Profile update failed", error);
-      toast.error("❌ Failed to update profile");
+      console.error("Profile save failed", error);
+      toast.error("❌ Failed to save profile");
     } finally {
       setLoading(false);
     }
@@ -88,10 +108,13 @@ const ProfilePage = () => {
 
   return (
     <div className="container py-5">
-      <div className="card shadow-lg p-4 mx-auto" style={{ maxWidth: "800px", borderRadius: "20px" }}>
+      <div
+        className="card shadow-lg p-4 mx-auto"
+        style={{ maxWidth: "800px", borderRadius: "20px" }}
+      >
         <h2 className="text-center mb-4 text-warning fw-bold">My Profile</h2>
 
-        {/* Profile Image */}
+        {/* Profile Image Section */}
         <div className="text-center mb-4">
           {previewImage ? (
             <img
@@ -124,7 +147,7 @@ const ProfilePage = () => {
           </div>
         </div>
 
-        {/* Form */}
+        {/* Profile Form */}
         <form onSubmit={handleSubmit(onSubmit)}>
           <div className="row g-3">
             <div className="col-md-6">
@@ -136,6 +159,7 @@ const ProfilePage = () => {
                 placeholder="Enter your first name"
               />
             </div>
+
             <div className="col-md-6">
               <label className="form-label fw-semibold">Last Name</label>
               <input
@@ -145,6 +169,7 @@ const ProfilePage = () => {
                 placeholder="Enter your last name"
               />
             </div>
+
             <div className="col-md-6">
               <label className="form-label fw-semibold">Phone</label>
               <input
@@ -154,6 +179,7 @@ const ProfilePage = () => {
                 placeholder="Enter phone number"
               />
             </div>
+
             <div className="col-md-6">
               <label className="form-label fw-semibold">Address</label>
               <input
@@ -163,6 +189,7 @@ const ProfilePage = () => {
                 placeholder="Enter address"
               />
             </div>
+
             <div className="col-12">
               <label className="form-label fw-semibold">Bio</label>
               <textarea
@@ -181,7 +208,13 @@ const ProfilePage = () => {
               disabled={loading}
               className="px-4 shadow"
             >
-              {loading ? <Spinner size="sm" animation="border" /> : "Save Profile"}
+              {loading ? (
+                <Spinner size="sm" animation="border" />
+              ) : profileExists ? (
+                "Update Profile"
+              ) : (
+                "Create Profile"
+              )}
             </Button>
           </div>
         </form>
